@@ -1,6 +1,7 @@
 use bootloader::boot_info::{FrameBuffer, FrameBufferInfo, PixelFormat};
 use core::convert::TryFrom;
 use core::ops::Range;
+use conquer_once::spin::OnceCell;
 
 pub struct Color {
     pub r: u8,
@@ -36,25 +37,37 @@ impl<T> Point<T> {
     }
 }
 
+static INFO: OnceCell<FrameBufferInfo> = OnceCell::uninit();
+static WRITER: OnceCell<spin::Mutex<FrameBufferWriter>> = OnceCell::uninit();
+
+pub fn init(fb: FrameBuffer) {
+    INFO.try_init_once(|| fb.info()).expect("cannot initialize INFO");
+    WRITER.try_init_once(||spin::Mutex::new(FrameBufferWriter::new(fb))).expect("cannot initialize INFO");
+}
+
+pub fn info() -> &'static FrameBufferInfo {
+    INFO.try_get().expect("INFO is not initialized")
+}
+
+pub fn writer() -> spin::MutexGuard<'static, FrameBufferWriter> {
+    WRITER.try_get().expect("WRITER is not initialized").lock()
+}
+
 pub struct FrameBufferWriter {
     inner: FrameBuffer,
 }
 
 impl FrameBufferWriter {
-    pub fn new(inner: FrameBuffer) -> Self {
+    fn new(inner: FrameBuffer) -> Self {
         Self { inner }
     }
 
-    pub fn info(&self) -> FrameBufferInfo {
-        self.inner.info()
-    }
-
     pub fn width(&self) -> Range<usize> {
-        0..self.info().horizontal_resolution
+        0..info().horizontal_resolution
     }
 
     pub fn height(&self) -> Range<usize> {
-        0..self.info().vertical_resolution
+        0..info().vertical_resolution
     }
 
     pub fn pixel_index<T>(&self, p: Point<T>) -> Option<usize>
@@ -65,7 +78,7 @@ impl FrameBufferWriter {
             bytes_per_pixel,
             stride,
             ..
-        } = self.info();
+        } = info();
 
         let x = usize::try_from(p.x).ok()?;
         let y = usize::try_from(p.y).ok()?;
@@ -75,7 +88,7 @@ impl FrameBufferWriter {
         Some((y * stride + x) * bytes_per_pixel)
     }
 
-    pub fn write<T>(&mut self, p: Point<T>, c: Color) -> bool
+    pub fn write_pixel<T>(&mut self, p: Point<T>, c: Color) -> bool
     where
         usize: TryFrom<T>,
     {
@@ -84,7 +97,7 @@ impl FrameBufferWriter {
             None => return false,
         };
 
-        match self.info().pixel_format {
+        match info().pixel_format {
             PixelFormat::RGB => {
                 self.inner.buffer_mut()[index + 0] = c.r;
                 self.inner.buffer_mut()[index + 1] = c.g;
