@@ -1,3 +1,5 @@
+use crate::pixelwriter::{pixel_writer, PixelWrite};
+
 use bootloader::boot_info::{FrameBuffer, FrameBufferInfo, PixelFormat};
 use core::convert::TryFrom;
 use core::ops::Range;
@@ -55,19 +57,25 @@ pub fn writer() -> spin::MutexGuard<'static, FrameBufferWriter> {
 
 pub struct FrameBufferWriter {
     inner: FrameBuffer,
+    writer: &'static (dyn PixelWrite + Send + Sync),
 }
 
 impl FrameBufferWriter {
     fn new(inner: FrameBuffer) -> Self {
-        Self { inner }
+        let writer = pixel_writer(inner.info().pixel_format);
+        Self { inner, writer, }
+    }
+
+    fn info(&self) -> FrameBufferInfo {
+        self.inner.info()
     }
 
     pub fn width(&self) -> Range<usize> {
-        0..info().horizontal_resolution
+        0..self.info().horizontal_resolution
     }
 
     pub fn height(&self) -> Range<usize> {
-        0..info().vertical_resolution
+        0..self.info().vertical_resolution
     }
 
     pub fn pixel_index<T>(&self, p: Point<T>) -> Option<usize>
@@ -78,7 +86,7 @@ impl FrameBufferWriter {
             bytes_per_pixel,
             stride,
             ..
-        } = info();
+        } = self.info();
 
         let x = usize::try_from(p.x).ok()?;
         let y = usize::try_from(p.y).ok()?;
@@ -96,23 +104,7 @@ impl FrameBufferWriter {
             Some(p) => p,
             None => return false,
         };
-
-        match info().pixel_format {
-            PixelFormat::RGB => {
-                self.inner.buffer_mut()[index + 0] = c.r;
-                self.inner.buffer_mut()[index + 1] = c.g;
-                self.inner.buffer_mut()[index + 2] = c.b;
-            }
-            PixelFormat::BGR => {
-                self.inner.buffer_mut()[index + 0] = c.b;
-                self.inner.buffer_mut()[index + 1] = c.g;
-                self.inner.buffer_mut()[index + 2] = c.r;
-            }
-            PixelFormat::U8 => {
-                self.inner.buffer_mut()[index] = c.grayscale();
-            }
-            _ => return false,
-        }
-        true
+        self.writer.write_pixel(self.inner.buffer_mut(), index, c)
     }
 }
+

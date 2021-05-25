@@ -2,6 +2,7 @@
 #![no_main]
 
 mod framebuffer;
+mod pixelwriter;
 
 use crate::framebuffer::{Color, Point};
 use bootloader::boot_info::Optional;
